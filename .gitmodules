@@ -1,0 +1,3 @@
+[submodule "src/utilities"]
+	path = src/utilities
+	url = https://github.com/KerryL/utilities.git
