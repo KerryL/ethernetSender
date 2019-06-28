@@ -28,7 +28,7 @@ std::string AdjustMessage(const std::string& rawMessage)
 }
 
 bool SendEthernetMessage(const bool& useTCP, const bool& broadcast, const std::string& targetIP,
-	const unsigned short& targetPort, const std::string& message)
+	const unsigned short& targetPort, const std::string& message, const bool& ignoreResponse)
 {
 	const CPPSocket::SocketType type([useTCP]()
 	{
@@ -64,7 +64,7 @@ bool SendEthernetMessage(const bool& useTCP, const bool& broadcast, const std::s
 	std::cout << "Message sent, waiting for response" << std::endl;
 
 	socket.SetBlocking(true);
-	while (true)
+	while (!ignoreResponse)
 	{
 		struct sockaddr_in sender;
 		const auto msgSize(socket.Receive(&sender));
@@ -93,7 +93,7 @@ int main(int argc, char* argv[])
 {
 	if (argc < 5)
 	{
-		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp or udp> <payload>\n";
+		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp or udp> [--ignore-response] <payload>\n";
 		std::cout << "        Use \\x## to represent a hex byte\n";
 		return 1;
 	}
@@ -104,7 +104,7 @@ int main(int argc, char* argv[])
 		std::istringstream ss(argv[2]);
 		unsigned short port;
 		if ((ss >> port).fail())
-			return 1;
+			return 0;
 		return port;
 	}());
 
@@ -126,6 +126,15 @@ int main(int argc, char* argv[])
 		return protocol.compare("udp-broadcast") == 0;
 	}());
 
+	const std::string ignoreFlag("--ignore-response");
+	bool ignoreResponse(false);
+	int firstPayloadArgument(4);
+	if (ignoreFlag.compare(argv[4]) == 0)
+	{
+		ignoreResponse = true;
+		++firstPayloadArgument;
+	}
+
 	std::cout << "Sending ";
 	if (useTCP)
 		std::cout << "TCP";
@@ -138,7 +147,7 @@ int main(int argc, char* argv[])
 	std::cout << std::endl;
 
 	std::string message;
-	for (int i = 4; i < argc; ++i)
+	for (int i = firstPayloadArgument; i < argc; ++i)
 	{
 		message.append(argv[i]);
 		if (i + 1 < argc)
@@ -146,7 +155,7 @@ int main(int argc, char* argv[])
 	}
 
 	std::cout << "Message is '" << message << '\'' << std::endl;
-	if (!SendEthernetMessage(useTCP, broadcast, targetIP, targetPort, message))
+	if (!SendEthernetMessage(useTCP, broadcast, targetIP, targetPort, message, ignoreResponse))
 		return 1;
 	return 0;
 }
