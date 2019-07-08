@@ -9,6 +9,7 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <cassert>
 
 std::string AdjustMessage(const std::string& rawMessage)
 {
@@ -27,37 +28,44 @@ std::string AdjustMessage(const std::string& rawMessage)
 	return s;
 }
 
-bool SendEthernetMessage(const bool& useTCP, const bool& broadcast, const std::string& targetIP,
+enum class Protocol
+{
+	TCP,
+	UDP,
+	UDPBroadcast,
+	WOL,
+	Unknown
+};
+
+bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 	const unsigned short& targetPort, const std::string& message, const bool& ignoreResponse)
 {
-	const CPPSocket::SocketType type([useTCP]()
+	const CPPSocket::SocketType type([protocol]()
 	{
-		if (useTCP)
+		if (protocol == Protocol::TCP)
 			return CPPSocket::SocketType::SocketTCPClient;
 		return CPPSocket::SocketType::SocketUDPClient;
 	}());
 
 	CPPSocket socket(type);
-	const auto adjMessage(AdjustMessage(message));
-
-	if (useTCP)
+	if (type == CPPSocket::SocketTCPClient)
 	{
 		if (!socket.Create(targetPort, targetIP))
 			return false;
-		if (!socket.TCPSend(reinterpret_cast<const CPPSocket::DataType*>(adjMessage.c_str()), adjMessage.length()))
+		if (!socket.TCPSend(reinterpret_cast<const CPPSocket::DataType*>(message.c_str()), message.length()))
 			return false;
 	}
 	else
 	{
 		if (!socket.Create(0, std::string()))
 			return false;
-		if (broadcast)
+		if (protocol == Protocol::UDPBroadcast || protocol == Protocol::WOL)
 		{
 			int trueflag(1);
 			if (!socket.SetOption(SOL_SOCKET, SO_BROADCAST, reinterpret_cast<CPPSocket::DataType*>(&trueflag), sizeof(trueflag)))
 				return false;
 		}
-		if (!socket.UDPSend(targetIP.c_str(), targetPort, reinterpret_cast<const CPPSocket::DataType*>(adjMessage.c_str()), adjMessage.length()))
+		if (!socket.UDPSend(targetIP.c_str(), targetPort, reinterpret_cast<const CPPSocket::DataType*>(message.c_str()), message.length()))
 			return false;
 	}
 
@@ -89,62 +97,85 @@ bool SendEthernetMessage(const bool& useTCP, const bool& broadcast, const std::s
 	return true;
 }
 
-int main(int argc, char* argv[])
+std::string BuildMagicPacket(const std::string& macAddress)
 {
-	if (argc < 5)
-	{
-		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp or udp> [--ignore-response] <payload>\n";
-		std::cout << "        Use \\x## to represent a hex byte\n";
-		return 1;
-	}
+	assert(macAddress.length() == 6);
+	std::string magicPacket;
+	magicPacket.append(6, static_cast<uint8_t>(0xFF));
+	for (unsigned int i = 0; i < 16; ++i)
+		magicPacket.append(macAddress);
+	assert(magicPacket.length() == 102);
+	return magicPacket;
+}
 
-	const std::string targetIP(argv[1]);
-	const unsigned short targetPort([argv]() -> unsigned short
+std::string GetProtocolString(const Protocol& p)
+{
+	if (p == Protocol::TCP)
+		return "TCP";
+	else if (p == Protocol::UDP)
+		return "UDP";
+	else if (p == Protocol::UDPBroadcast)
+		return "UDP Broadcast";
+	else if (p == Protocol::WOL)
+		return "WOL";
+	return "Unknown";
+}
+
+struct Arguments
+{
+	std::string targetIP;
+	unsigned short targetPort;
+	Protocol protocol;
+	bool ignoreResponse = false;
+	std::string message;
+};
+
+bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
+{
 	{
 		std::istringstream ss(argv[2]);
-		unsigned short port;
-		if ((ss >> port).fail())
-			return 0;
-		return port;
-	}());
+		if ((ss >> arguments.targetPort).fail())
+		{
+			std::cerr << "Failed to parse target port\n";
+			return false;
+		}
+	};
 
-	if (targetPort == 0)
+	arguments.protocol = Protocol::Unknown;
+	const std::string protocolString(argv[3]);
+	if (protocolString == std::string("tcp"))
+		arguments.protocol = Protocol::TCP;
+	else if (protocolString == std::string("udp"))
+		arguments.protocol = Protocol::UDP;
+	else if (protocolString == std::string("udp-broadcast"))
+		arguments.protocol = Protocol::UDP;
+	else if (protocolString == std::string("wol"))
+		arguments.protocol = Protocol::UDP;
+
+	if (arguments.protocol == Protocol::Unknown)
 	{
-		std::cerr << "Failed to parse port nubmer\n";
-		return 1;
+		std::cerr << "Unknown protocol specified\n";
+		return false;
 	}
 
-	const bool useTCP([argv]()
-	{
-		const std::string protocol(argv[3]);
-		return protocol.compare("tcp") == 0;
-	}());
-
-	const bool broadcast([argv]()
-	{
-		const std::string protocol(argv[3]);
-		return protocol.compare("udp-broadcast") == 0;
-	}());
-
-	const std::string ignoreFlag("--ignore-response");
-	bool ignoreResponse(false);
-	int firstPayloadArgument(4);
-	if (ignoreFlag.compare(argv[4]) == 0)
-	{
-		ignoreResponse = true;
-		++firstPayloadArgument;
-	}
-
-	std::cout << "Sending ";
-	if (useTCP)
-		std::cout << "TCP";
+	if (arguments.protocol == Protocol::UDPBroadcast || arguments.protocol == Protocol::WOL)
+		arguments.targetIP = CPPSocket::GetBroadcastAddress(argv[3]);
 	else
-		std::cout << "UDP";
-	std::cout << " message to " << targetIP << ":" << targetPort;
-	
-	if (broadcast)
-		std::cout << " (broadcast)";
-	std::cout << std::endl;
+		arguments.targetIP = argv[3];
+
+	arguments.ignoreResponse = arguments.protocol == Protocol::WOL;
+	int firstPayloadArgument(4);
+	if (!arguments.ignoreResponse)
+	{
+		const std::string ignoreFlag("--ignore-response");
+		if (ignoreFlag.compare(argv[4]) == 0)
+		{
+			arguments.ignoreResponse = true;
+			++firstPayloadArgument;
+		}
+	}
+
+	std::cout << "Sending " << GetProtocolString(arguments.protocol) << " message to " << arguments.targetIP << ":" << arguments.targetPort << std::endl;
 
 	std::string message;
 	for (int i = firstPayloadArgument; i < argc; ++i)
@@ -154,8 +185,37 @@ int main(int argc, char* argv[])
 			message.append(" ");
 	}
 
-	std::cout << "Message is '" << message << '\'' << std::endl;
-	if (!SendEthernetMessage(useTCP, broadcast, targetIP, targetPort, message, ignoreResponse))
+	message = AdjustMessage(message);// Resolve values specified as hex bytes
+	if (arguments.protocol == Protocol::WOL)
+	{
+		if (message.length() != 6)
+		{
+			std::cerr << "MAC address must be exactly six bytes\n";
+			return false;
+		}
+		message = BuildMagicPacket(message);
+	}
+
+	return true;
+}
+
+int main(int argc, char* argv[])
+{
+	if (argc < 5)
+	{
+		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp, udp, upd-broadcast> [--ignore-response] <payload>\n";
+		std::cout << "        or, for Wake-On-LAN:";
+		std::cout << "        " << argv[0] << " <ip address> <port> wol <MAC address>\n";
+		std::cout << "        Use \\x## to represent a hex byte in the payload\n";
+		return 1;
+	}
+
+	Arguments arguments;
+	if (!ParseArguments(argc, argv, arguments))
+		return 1;
+
+	std::cout << "Message is '" << arguments.message << '\'' << std::endl;
+	if (!SendEthernetMessage(arguments.protocol, arguments.targetIP, arguments.targetPort, arguments.message, arguments.ignoreResponse))
 		return 1;
 	return 0;
 }
