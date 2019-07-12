@@ -148,9 +148,9 @@ bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 	else if (protocolString == std::string("udp"))
 		arguments.protocol = Protocol::UDP;
 	else if (protocolString == std::string("udp-broadcast"))
-		arguments.protocol = Protocol::UDP;
+		arguments.protocol = Protocol::UDPBroadcast;
 	else if (protocolString == std::string("wol"))
-		arguments.protocol = Protocol::UDP;
+		arguments.protocol = Protocol::WOL;
 
 	if (arguments.protocol == Protocol::Unknown)
 	{
@@ -159,9 +159,15 @@ bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 	}
 
 	if (arguments.protocol == Protocol::UDPBroadcast || arguments.protocol == Protocol::WOL)
-		arguments.targetIP = CPPSocket::GetBroadcastAddress(argv[3]);
+		arguments.targetIP = CPPSocket::GetBroadcastAddress(argv[1]);
 	else
-		arguments.targetIP = argv[3];
+		arguments.targetIP = argv[1];
+
+	if (arguments.targetIP.empty())
+	{
+		std::cerr << "Invalid IP address\n";
+		return false;
+	}
 
 	arguments.ignoreResponse = arguments.protocol == Protocol::WOL;
 	int firstPayloadArgument(4);
