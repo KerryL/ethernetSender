@@ -84,7 +84,10 @@ bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 			return false;
 		}
 		else if (msgSize == 0)
-			std::cout << "Received empty response\n";
+		{
+			std::cout << "Received empty response (connection closed)\n";
+			return true;
+		}
 		else
 		{
 			std::cout << "Response(" << msgSize << " bytes) from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =\n";
@@ -185,23 +188,22 @@ bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 
 	std::cout << "Sending " << GetProtocolString(arguments.protocol) << " message to " << arguments.targetIP << ":" << arguments.targetPort << std::endl;
 
-	std::string message;
 	for (int i = firstPayloadArgument; i < argc; ++i)
 	{
-		message.append(argv[i]);
+		arguments.message.append(argv[i]);
 		if (i + 1 < argc)
-			message.append(" ");
+			arguments.message.append(" ");
 	}
 
-	message = AdjustMessage(message);// Resolve values specified as hex bytes
+	arguments.message = AdjustMessage(arguments.message);// Resolve values specified as hex bytes
 	if (arguments.protocol == Protocol::WOL)
 	{
-		if (message.length() != 6)
+		if (arguments.message.length() != 6)
 		{
 			std::cerr << "MAC address must be exactly six bytes\n";
 			return false;
 		}
-		message = BuildMagicPacket(message);
+		arguments.message = BuildMagicPacket(arguments.message);
 	}
 
 	return true;
