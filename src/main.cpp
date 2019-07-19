@@ -25,6 +25,8 @@ std::string AdjustMessage(const std::string& rawMessage)
 		s.append(std::string(1, byte));
 	}
 
+	s.append(rawMessage.substr(lastP));
+
 	return s;
 }
 
