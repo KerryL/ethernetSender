@@ -5,7 +5,7 @@
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <LocalDebuggerCommandArguments>localhost 9222 tcp {\x22command\x22: \x22Page.navigate\x22, \x22params\x22: {\x22url\x22: \x22http://ebirg.org/explore\x22}</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>127.0.0.1 9222 tcp {\x22command\x22: \x22Page.navigate\x22, \x22params\x22: {\x22url\x22: \x22http://ebirg.org/explore\x22}</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

@@ -90,7 +90,10 @@ bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 		}
 		else
 		{
-			std::cout << "Response(" << msgSize << " bytes) from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =\n";
+			std::cout << "Response(" << msgSize << " bytes)";
+			if (protocol != Protocol::TCP)
+				std::cout << "from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =";
+			std::cout << '\n';
 			const auto response(std::string(socket.GetLastMessage(), msgSize));
 			for (const auto& c : response)
 				std::cout << "0x" << std::hex << std::setfill('0') << std::setw(2) << c << " ";
