@@ -40,7 +40,7 @@ enum class Protocol
 };
 
 bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
-	const unsigned short& targetPort, const std::string& message, const bool& ignoreResponse)
+	const unsigned short& targetPort, const std::string& message, const bool& ignoreResponse, const bool& plainTextResponse)
 {
 	const CPPSocket::SocketType type([protocol]()
 	{
@@ -95,10 +95,16 @@ bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 				std::cout << "from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =";
 			std::cout << '\n';
 			const auto response(std::string(socket.GetLastMessage(), msgSize));
-			for (const auto& c : response)
-				std::cout << "0x" << std::hex << std::setfill('0') << std::setw(2) << c << " ";
-			std::cout << std::endl;
-			std::cout << std::dec;
+
+			if (plainTextResponse)
+				std::cout << response << std::endl;
+			else
+			{
+				for (const auto& c : response)
+					std::cout << "0x" << std::hex << std::setfill('0') << std::setw(2) << c << " ";
+				std::cout << std::endl;
+				std::cout << std::dec;
+			}
 		}
 	}
 
@@ -135,6 +141,7 @@ struct Arguments
 	unsigned short targetPort;
 	Protocol protocol;
 	bool ignoreResponse = false;
+	bool plainTextResponse = false;
 	std::string message;
 };
 
@@ -182,9 +189,19 @@ bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 	if (!arguments.ignoreResponse)
 	{
 		const std::string ignoreFlag("--ignore-response");
-		if (ignoreFlag.compare(argv[4]) == 0)
+		if (ignoreFlag.compare(argv[firstPayloadArgument]) == 0)
 		{
 			arguments.ignoreResponse = true;
+			++firstPayloadArgument;
+		}
+	}
+
+	if (!arguments.plainTextResponse)
+	{
+		const std::string plainTextFlag("--plain-text-response");
+		if (plainTextFlag.compare(argv[firstPayloadArgument]) == 0)
+		{
+			arguments.plainTextResponse = true;
 			++firstPayloadArgument;
 		}
 	}
@@ -216,7 +233,7 @@ int main(int argc, char* argv[])
 {
 	if (argc < 5)
 	{
-		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp, udp, upd-broadcast> [--ignore-response] <payload>\n";
+		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp, udp, upd-broadcast> [--ignore-response] [--plain-text-response] <payload>\n";
 		std::cout << "        or, for Wake-On-LAN:";
 		std::cout << "        " << argv[0] << " <ip address> <port> wol <MAC address>\n";
 		std::cout << "        Use \\x## to represent a hex byte in the payload\n";
@@ -228,7 +245,7 @@ int main(int argc, char* argv[])
 		return 1;
 
 	std::cout << "Message is '" << arguments.message << '\'' << std::endl;
-	if (!SendEthernetMessage(arguments.protocol, arguments.targetIP, arguments.targetPort, arguments.message, arguments.ignoreResponse))
+	if (!SendEthernetMessage(arguments.protocol, arguments.targetIP, arguments.targetPort, arguments.message, arguments.ignoreResponse, arguments.plainTextResponse))
 		return 1;
 	return 0;
 }
