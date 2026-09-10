@@ -10,6 +10,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cassert>
+#include <chrono>
 
 std::string AdjustMessage(const std::string& rawMessage)
 {
@@ -39,12 +40,22 @@ enum class Protocol
 	Unknown
 };
 
-bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
-	const unsigned short& targetPort, const std::string& message, const bool& ignoreResponse, const bool& plainTextResponse)
+struct Arguments
 {
-	const CPPSocket::SocketType type([protocol]()
+	std::string targetIP;
+	unsigned short targetPort;
+	Protocol protocol;
+	bool ignoreResponse = false;
+	bool plainTextResponse = false;
+	std::string message;
+	unsigned int responseWait = 0;// [ms]
+};
+
+bool SendEthernetMessage(const Arguments& arguments)
+{
+	const CPPSocket::SocketType type([arguments]()
 	{
-		if (protocol == Protocol::TCP)
+		if (arguments.protocol == Protocol::TCP)
 			return CPPSocket::SocketType::SocketTCPClient;
 		return CPPSocket::SocketType::SocketUDPClient;
 	}());
@@ -52,35 +63,47 @@ bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 	CPPSocket socket(type);
 	if (type == CPPSocket::SocketTCPClient)
 	{
-		if (!socket.Create(targetPort, targetIP))
+		if (!socket.Create(arguments.targetPort, arguments.targetIP))
 			return false;
-		if (!socket.TCPSend(reinterpret_cast<const CPPSocket::DataType*>(message.c_str()), message.length()))
+		if (!socket.TCPSend(reinterpret_cast<const CPPSocket::DataType*>(arguments.message.c_str()), arguments.message.length()))
 			return false;
 	}
 	else
 	{
 		if (!socket.Create(0, std::string()))
 			return false;
-		if (protocol == Protocol::UDPBroadcast || protocol == Protocol::WOL)
+		if (arguments.protocol == Protocol::UDPBroadcast || arguments.protocol == Protocol::WOL)
 		{
 			int trueflag(1);
 			if (!socket.SetOption(SOL_SOCKET, SO_BROADCAST, reinterpret_cast<CPPSocket::DataType*>(&trueflag), sizeof(trueflag)))
 				return false;
 		}
-		if (!socket.UDPSend(targetIP.c_str(), targetPort, reinterpret_cast<const CPPSocket::DataType*>(message.c_str()), message.length()))
+		if (!socket.UDPSend(arguments.targetIP.c_str(), arguments.targetPort, reinterpret_cast<const CPPSocket::DataType*>(arguments.message.c_str()), arguments.message.length()))
 			return false;
 	}
 
 	std::cout << "Message sent, waiting for response" << std::endl;
 
-	socket.SetBlocking(true);
-	while (!ignoreResponse)
+	socket.SetBlocking(arguments.responseWait == 0);
+
+	auto timerStart(std::chrono::steady_clock::now());
+	while (!arguments.ignoreResponse)
 	{
 		struct sockaddr_in sender;
 		const auto msgSize(socket.Receive(&sender));
+
 		if (msgSize == SOCKET_ERROR)
 		{
-			std::cout << "Receive failed:  " << socket.GetErrorString() << std::endl;
+			if (arguments.responseWait > 0)
+			{
+				// If we didn't get data, check to see if our timer has elapsed; if not, keep trying for data
+				const auto now(std::chrono::steady_clock::now());
+				const auto thresholdDuration = arguments.responseWait * std::chrono::milliseconds{ 1 };
+
+				if ((now - timerStart) < thresholdDuration)
+					continue;
+			}
+
 			return false;
 		}
 		else if (msgSize == 0)
@@ -90,14 +113,21 @@ bool SendEthernetMessage(const Protocol& protocol, const std::string& targetIP,
 		}
 		else
 		{
-			std::cout << "Response(" << msgSize << " bytes)";
-			if (protocol != Protocol::TCP)
-				std::cout << "from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =";
-			std::cout << '\n';
+			// Got good data; reset the timer
+			timerStart = std::chrono::steady_clock::now();
+
+			if (!arguments.plainTextResponse)
+			{
+				std::cout << "Response(" << msgSize << " bytes)";
+				if (arguments.protocol != Protocol::TCP)
+					std::cout << "from " << inet_ntoa(sender.sin_addr) << ":" << ntohs(sender.sin_port) << " =";
+				std::cout << '\n';
+			}
+
 			const auto response(std::string(socket.GetLastMessage(), msgSize));
 
-			if (plainTextResponse)
-				std::cout << response << std::endl;
+			if (arguments.plainTextResponse)
+				std::cout << response;
 			else
 			{
 				for (const auto& c : response)
@@ -134,16 +164,6 @@ std::string GetProtocolString(const Protocol& p)
 		return "WOL";
 	return "Unknown";
 }
-
-struct Arguments
-{
-	std::string targetIP;
-	unsigned short targetPort;
-	Protocol protocol;
-	bool ignoreResponse = false;
-	bool plainTextResponse = false;
-	std::string message;
-};
 
 bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 {
@@ -206,6 +226,19 @@ bool ParseArguments(const int argc, char* argv[], Arguments& arguments)
 		}
 	}
 
+	const std::string responseWaitFlag("--response-wait");
+	if (responseWaitFlag.compare(argv[firstPayloadArgument]) == 0)
+	{
+		++firstPayloadArgument;
+		std::istringstream ss(argv[firstPayloadArgument]);
+		if (!(ss >> arguments.responseWait))
+		{
+			std::cerr << "Failed to parse " << responseWaitFlag << " argument\n";
+			return false;
+		}
+		++firstPayloadArgument;
+	}
+
 	std::cout << "Sending " << GetProtocolString(arguments.protocol) << " message to " << arguments.targetIP << ":" << arguments.targetPort << std::endl;
 
 	for (int i = firstPayloadArgument; i < argc; ++i)
@@ -233,7 +266,7 @@ int main(int argc, char* argv[])
 {
 	if (argc < 5)
 	{
-		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp, udp, upd-broadcast> [--ignore-response] [--plain-text-response] <payload>\n";
+		std::cout << "Usage:  " << argv[0] << " <ip address> <port> <tcp, udp, upd-broadcast> [--ignore-response] [--plain-text-response] [--response-wait <ms to wait>] <payload>\n";
 		std::cout << "        or, for Wake-On-LAN:";
 		std::cout << "        " << argv[0] << " <ip address> <port> wol <MAC address>\n";
 		std::cout << "        Use \\x## to represent a hex byte in the payload\n";
@@ -245,7 +278,7 @@ int main(int argc, char* argv[])
 		return 1;
 
 	std::cout << "Message is '" << arguments.message << '\'' << std::endl;
-	if (!SendEthernetMessage(arguments.protocol, arguments.targetIP, arguments.targetPort, arguments.message, arguments.ignoreResponse, arguments.plainTextResponse))
+	if (!SendEthernetMessage(arguments))
 		return 1;
 	return 0;
 }
